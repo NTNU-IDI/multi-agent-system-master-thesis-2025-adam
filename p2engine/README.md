@@ -1,115 +1,40 @@
-# P2Engine: A Multi-Agent System Framework
+### P2Engine
 
-<div align="center">
+> _This setup + docs should get you going, but there’s still much more to write on P2Engine features and configurations, I don't want it to be hidden, I’m on it!_
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Poetry](https://img.shields.io/badge/dependency%20management-poetry-blueviolet)](https://python-poetry.org/)
-[![Redis](https://img.shields.io/badge/cache-redis-red)](https://redis.io/)
-[![Celery](https://img.shields.io/badge/task%20queue-celery-green)](https://docs.celeryproject.org/)
-[![Daml](https://img.shields.io/badge/ledger-daml-blue)](https://www.digitalasset.com/developers)
+- [Quick Start](#quick-start)
+- [Basic Usage](#basic-usage)
+- [Rollouts](#rollouts)
+- [Evals](#evals)
+- [Agents](#agents-configagentsyml)
+- [Tools](#tools)
+- [Ledger Operations](#ledger-operations)
+- [Branching](#branching)
+- [Configuration Overrides](#configuration-overrides)
+- [Health of the System](#health-of-the-system)
+- [Core Modules](#core-modules)
 
-**A Modular Framework**
+#### Quick Start
 
-</div>
+##### Prerequisites
 
-## 🌟 Overview
-
-P2Engine is a research framework that seeks to realize fully autonomous systems through the integration of multi-agent systems (MAS) with distributed ledger technology (DLT). The platform demonstrates how autonomous agents can operate with verifiable accountability while also enabling the posibility for adaptation.
-
-### Core Capabilities
-
-- **FSM-Orchestrated Multi-Agent Systems**: Finite-state machine coordination enabling precise, observable agent workflows
-- **Auditable Infrastructure via DLT**: Canton/Daml integration providing immutable audit trails and privacy-aware operations
-- **Adaptation**: MCTS/RL-based reasoners with automated evaluation for continuous improvement
-- **Distributed Task Execution**: Celery-based architecture for scalable agent operations
-- **Effect System**: Controlled side-effect management ensuring system integrity
-- **Comprehensive Observability**: Real-time monitoring, tracing, and debugging capabilities
-
-
-## 🏗️ Architecture
-
-P2Engine is organized into several core modules, each with its own comprehensive documentation:
-
-### Core Modules
-
-- **[`/agents`](./agents/README.md)** - Agent implementations and framework
-
-  - LLM, rule-based, and human-in-loop agents
-  - Tool registration and decorators
-  - Persona system and templates
-  - Agent factory and plugin system
-
-- **[`/orchestrator`](./orchestrator/README.md)** - Conversation flow management
-
-  - Interaction stack with branching support
-  - State machine and transitions
-  - LLM-compatible message rendering
-  - Agent and tool registries
-
-- **[`/runtime`](./runtime/README.md)** - Execution engine and task processing
-
-  - Agent runtime and state handlers
-  - Effect system for side effects
-  - Celery-based task distribution
-  - Rollout and evaluation execution
-
-- **[`/infra`](./infra/README.md)** - Core infrastructure components
-
-  - Configuration management
-  - Artifact bus for event storage
-  - LLM client abstraction
-  - Evaluation framework
-  - Session management
-
-- **[`/tools`](./tools/README.md)** - Extensible tool system
-
-  - Tool creation guide
-  - Built-in tools (delegate, ledger, weather)
-  - Caching and deduplication
-  - Post-effects system
-
-- **[`/services`](./services/README.md)** - Service layer and DI container
-
-  - ServiceContainer for dependency injection
-  - Canton/Daml ledger integration
-  - Thread-safe service management
-
-- **[`/cli`](./cli/README.md)** - Command-line interface
-  - Interactive chat system
-  - Configuration management
-  - Conversation inspection
-  - Rollout execution
-
-### System Flow
-
-1. **Agents** execute tasks based on FSM-defined workflows
-2. **Orchestrator** manages state transitions and coordination
-3. **Runtime** handles execution, effects, and learning feedback
-4. **DLT** provides verifiable infrastructure for all operations
-5. **Evaluators** assess quality and trigger adaptation
-6. **Reasoners** optimize future strategies based on outcomes
-
-### Understanding the System
-
-For a deep understanding of P2Engine:
-
-1. **Start with [`/agents/README.md`](./agents/README.md)** to understand how agents work
-2. **Read [`/orchestrator/README.md`](./orchestrator/README.md)** to learn about conversation flow
-3. **Study [`/runtime/README.md`](./runtime/README.md)** for execution details
-4. **Review [`/tools/README.md`](./tools/README.md)** to create custom tools
-5. **Check [`/infra/README.md`](./infra/README.md)** for infrastructure details
-
-## 🚀 Quick Start
-
-### Prerequisites
+First let's make sure we have these:
 
 - Python 3.9+
 - Redis
-- Poetry (for dependency management)
+- Poetry
 - Daml SDK (optional, for ledger features)
 - OpenAI API key
 
-### Installation
+_I run things on my Mac, you might/will need to do some tiny tweaks if you're on a different setup!_
+
+_The following setup is and suebseqeunt documnation should suffice but there is still ålenty to be written on here, going to work on that_
+
+##### Installation
+
+Then we clone, install the dependencies and set up the environment variables.
+There are a lot of options here, but the OpenAI API key is the important one..
+and decide whether you want the ledger enabled (true/false).
 
 ```bash
 # Clone the repository
@@ -127,9 +52,9 @@ cp .env.example .env
 ./scripts/setup_canton.sh
 ```
 
-### Environment Configuration (.env)
+##### Environment Configuration (.env)
 
-The `.env` file contains all critical configuration for the system. Here's a complete guide:
+The `.env` file contains all of the critical configurations for the system. Here's a complete guide:
 
 ```bash
 # Configuration file path (optional - defaults to config/config.json)
@@ -177,16 +102,16 @@ ARTIFACT_DRIVER=fs
 # LEDGER_DEV_MODE=true       # Auto-set for development
 ```
 
-### Running the System
+##### Running the System
 
-The **primary way** to run P2Engine is through the orchestration script:
+The **primary way** to run P2Engine is through the run_project script:
 
 ```bash
 # This single command starts EVERYTHING:
 ./scripts/run_project.sh
 ```
 
-#### What run_project.sh does:
+##### What run_project.sh does:
 
 1. **Environment Setup**: Loads `.env` configuration
 2. **Process Cleanup**: Kills any existing P2Engine processes
@@ -205,163 +130,166 @@ The **primary way** to run P2Engine is through the orchestration script:
 6. **Engine**: Starts the main runtime engine
 7. **CLI**: Launches the interactive shell
 
-The script handles all the complex orchestration and provides:
+So yes, when the script is run, you are dropped into the interactive CLI of P2Engine, where you can start experimenting.
 
-- Automatic log rotation with timestamped directories
-- Process monitoring with PIDs
-- Graceful shutdown on Ctrl+C
-- Health checks for all services
+#### Basic Usage
 
-#### Manual Component Start (Advanced)
-
-If you need to run components separately for debugging:
-
-```bash
-# 1. Redis
-redis-server
-
-# 2. Canton (if using ledger)
-./scripts/start_canton.sh
-
-# 3. Celery workers
-poetry run celery -A runtime.tasks.celery_app worker -Q ticks -n ticks@%h
-poetry run celery -A runtime.tasks.celery_app worker -Q tools -n tools@%h
-poetry run celery -A runtime.tasks.celery_app worker -Q evals -n evals@%h
-poetry run celery -A runtime.tasks.celery_app worker -Q rollouts -n rollouts@%h
-
-# 4. Engine
-poetry run python runtime/engine.py
-
-# 5. CLI
-poetry run p2engine shell
-```
-
-## 💬 Basic Usage
-
-### Starting a Chat
+##### Starting a Chat
 
 ```bash
 # Start a conversation with an agent
-p2engine chat with agent_alpha
+p2engine▸ chat with agent_alpha
+
+# any agent name works
+p2engine▸ chat with x
+
+#  Some agents, such as agent_alpha are preconfigured with
+#  personas/tools/temperatures etc which you can define in config/agents.yml
 
 # In the chat:
-You> Hello! What can you do?
-You> Check my balance
-You> Transfer 25 to agent_beta for helping with analysis
-You> What's the weather in Paris?
+You: Hello! What can you do?
+You: Transfer 25 to agent_beta for helping with analysis
+You: What's the weather in Paris?
 ```
 
-### Multi-Agent Delegation
+##### Delegation, make use of sub-agents
 
 ```bash
 # Agents can delegate to each other
-You> Delegate to agent_helper: What's the weather in Tokyo?
-You> If they did well, reward them 20 units
+You: Delegate to agent_helper: What's the weather in Tokyo?
+You: If they did well, reward them 20 units
 ```
 
-### Using the Shell
+##### Example Commands to Try in the P2Engine Shell
+
+Start by running the help command, it will list all available commands.
+Then try a few of them out! If you type something incorrectly, the shell will give you feedback and show you how to run it correctly.
 
 ```bash
-p2engine shell
-
-# Available commands:
+p2engine▸ help
 p2engine▸ agent list
 p2engine▸ conversation list
+p2engine▸ conversation stack <conversation_name> # see state history, messages, tool-calls ..
+p2engine▸ chat resume <conversation_name> # resume a previous conversation
 p2engine▸ ledger balance agent_alpha
 p2engine▸ rollout start config/demo_rollout.yml
+p2engine▸ exit # Exit the P2Engine shell entirely
+You: exit # Exit the current conversation, but stay in the shell
 ```
 
-## 💰 Ledger Operations
+#### Rollouts
 
-P2Engine includes a full financial ledger system powered by Canton/Daml:
+There are rollouts in P2Engine that let you configure teams, agents, task variants, evaluation criteria, rubrics, and the judge. P2Engine also supports dynamic swapping, so you can modify or add new rollouts while the system is running.
 
-### Initialize Wallets
-
-```bash
-# Initialize all agent wallets with starting balance
-p2engine ledger init --balance 100.0
-```
-
-### Check Balances
-
-```bash
-# Check specific agent balance
-p2engine ledger balance agent_alpha
-
-# Check system metrics
-p2engine ledger metrics
-
-# View all wallets
-p2engine ledger overview
-```
-
-### Transfer Funds
-
-```bash
-# Direct transfer via CLI
-p2engine ledger transfer agent_alpha agent_beta 25.0 --reason "Payment for services"
-
-# Or through agent conversation
-p2engine chat with agent_alpha
-You> Transfer 50 to treasurer for management fees
-```
-
-### Transaction History
-
-```bash
-# View agent's transaction history
-p2engine ledger history agent_alpha --limit 20
-
-# Audit trail for all ledger events
-p2engine ledger audit
-```
-
-## 🧪 Learning-Enabled System
-
-The rollout system enables continuous improvement through evaluation and adaptation:
-
-### Example Learning Configuration
+##### Example Learning Configuration
 
 ```yaml
-# config/learning_rollout.yml
 teams:
-  autonomous_team:
-    initial_message: "Solve this complex multi-step problem"
+  joke_story_team:
+    initial_message: >
+      Write a hilarious 10-sentence story describing life on the ISS.
+      Finish with a clever pun as the final sentence.
     base:
       agent_id: agent_alpha
-      model: openai/gpt-4o
-      reasoning_policy: mcts_v1
-    variants:
-      - tools: ["analyze", "delegate", "verify"]
-        temperature: 0.3
-        search_depth: 10
-      - tools: ["analyze", "delegate", "verify", "learn"]
-        temperature: 0.7
-        search_depth: 20
     eval:
-      evaluator_id: comprehensive_judge
-      metrics: ["correctness", "efficiency", "collaboration"]
-      feedback_loop: true
+      evaluator_id: gpt4_judge
       rubric: |
-        Evaluate based on:
-        - Solution correctness (0.4)
-        - Execution efficiency (0.3)
-        - Effective delegation (0.3)
+        Evaluate humor quality:
+        - Funny? (0.6)
+        - Creative/original? (0.3)
+        - Followed instructions? (0.1)
+      metric: score
+    variants:
+      - id: gpt4o_lowtemp
+        model: openai/gpt-4o
+        temperature: 0.3
+      - id: gpt35_hightemp
+        model: openai/gpt-3.5-turbo
+        temperature: 0.8
 ```
 
-### Running Rollouts
+##### Here are some examples rollouts you could test
+
+> **⚠️ Note:**  
+> The example rollouts below are mainly for showcasing P2Engine’s features (rollouts, ledger transfers, agent interactions), which I needed for my thesis :)  
+> They are not meant as proper A/B experiments or full evaluation runs, but I’ll be adapting them to create more useful trajectories soon, because well that is what rollouts are for.
+
+```bash
+# Run all example rollouts
+p2engine▸ rollout start config/demo_rollout.yml
+p2engine▸ rollout start config/rollout_task_with_payment.yml
+p2engine▸ rollout start config/rollout_competitive_payment.yml
+p2engine▸ rollout start config/rollout_hierarchical_distribution.yml
+
+# Check results
+# If ledger is on, and rollout has transactions, it's cool to use these to inspect after a run.
+p2engine▸ ledger overview
+p2engine▸ ledger audit
+```
+
+##### Running Rollouts
+
+The best way to run rollouts is with the --follow flag. If you want to try a new experimental visualization I'm working on, add --rerun as well :)
 
 ```bash
 # Start a rollout
-p2engine rollout start config/rollout_joke.yml --follow
+p2engine▸ rollout start config/rollout_joke.yml
+p2engine▸ rollout start config/rollout_joke.yml --follow
+p2engine▸ rollout start config/rollout_joke.yml --rerun
+p2engine▸ rollout start config/rollout_joke.yml --rerun --follow
 
 # View results
-p2engine eval top <session_id> --metric score
+p2engine▸ eval top <session_id> --metric score
 ```
 
-## 🛠️ Creating Custom Tools
+Rollouts is the key thing I would like to improve on and currently has a lot
+of potential, as well as rest of P2Engine, but a lot is hidden, not documented and needs that last polish.
 
-Tools extend agent capabilities. Here's how to create one:
+#### Evals
+
+P2Engine includes a pretty proper evaluation framework that is configurable:
+
+##### Built-in Evaluators
+
+- P2Engine has a **gpt4_judge**: Use it for general quality evaluation
+- And custom rubrics for specific use cases
+
+##### Creating Custom Evaluators
+
+```python
+from infra.evals.llm_eval import LLMEvaluator
+from infra.evals.registry import evaluator
+
+@evaluator(id="domain_expert", version="1.0")
+class DomainExpertEvaluator(LLMEvaluator):
+    model = "openai/gpt-4o"
+
+    def build_messages(self, payload):
+        # Custom evaluation logic
+        return [...]
+```
+
+#### Agents (`config/agents.yml`)
+
+Here is how we could configure some agents we want with specific spec:
+
+```yaml
+agents:
+  - id: agent_alpha
+    type: llm
+    llm_model: "openai/gpt-4o"
+    tools: ["get_weather", "delegate", "check_balance", "transfer_funds"]
+
+  - id: treasurer
+    type: llm
+    llm_model: "openai/gpt-4o"
+    behavior_template: "financial_expert"
+    tools: ["check_balance", "transfer_funds", "transaction_history"]
+```
+
+#### Tools
+
+Here's how to create tools:
 
 ```python
 # tools/my_custom_tool.py
@@ -389,187 +317,99 @@ def search_database(query: str, limit: int = 10) -> dict:
     }
 ```
 
-## 🎯 Advanced Features
+#### Ledger Operations
 
-### Branch Management
+And yes P2Engine is extended with a full ledger, it uses Canton Network, and DAML as the smart contract language..
+
+##### Initialize Wallets
+
+```bash
+# Initialize all agent wallets with starting balance
+# This step is handled automatically by run_project.sh
+p2engine▸ ledger init --balance 100.0
+```
+
+##### Check Balances
+
+```bash
+# Check specific agent balance
+p2engine▸ ledger balance agent_alpha
+
+# Check system metrics
+p2engine▸ ledger metrics
+
+# View all wallets
+p2engine▸ ledger overview
+```
+
+##### Transfer Funds
+
+```bash
+# Direct transfer via CLI
+p2engine▸ ledger transfer agent_alpha agent_beta 25.0 --reason "Payment for services"
+
+# Or through agent conversation
+p2engine▸ chat with agent_alpha
+You: Transfer 50 to treasurer for management fees
+```
+
+##### Transaction History
+
+```bash
+# View agent's transaction history
+p2engine▸ ledger history agent_alpha --limit 20
+
+# Audit trail for all ledger events
+p2engine▸ ledger audit
+```
+
+#### Branching
+
+One cool thing about P2Engine is that it supports branching on our conversations/chats. You can have multiple branches, checkout back and forth, rewind to the state/step you want.
 
 ```bash
 # View conversation branches
-p2engine conversation branches <conversation_name>
+p2engine▸ conversation branches <conversation_name>
 
 # Rewind to a previous state
-p2engine conversation rewind <conversation_name> 10 --branch
+p2engine▸ conversation rewind <conversation_name> 10 --branch
 
 # Checkout a different branch
-p2engine conversation checkout <conversation_name> <branch_id>
+p2engine▸ conversation checkout <conversation_name> <branch_id>
 ```
 
-### Real-time Monitoring
+#### Configuration Overrides
 
-```bash
-# Watch conversation stack in real-time
-p2engine conversation watch <conversation_name>
-
-# Monitor artifacts
-p2engine artifact show <conversation_id> --limit 50
-```
-
-### Configuration Overrides
+While P2Engine is running, you can update an agent’s persona or tools using these commands:
 
 ```bash
 # Change agent behavior
-p2engine config set-behavior <conversation> weather_expert
+p2engine▸ config set-behavior <conversation> weather_expert
 
 # Override tools
-p2engine config set-tools <conversation> get_weather,delegate,check_balance
+p2engine▸ config set-tools <conversation> get_weather,delegate,check_balance
 
 # View current overrides
-p2engine config show-overrides <conversation>
+p2engine▸ config show-overrides <conversation>
 ```
 
-## 📊 Evaluation System
+#### Health of the System
 
-P2Engine includes a sophisticated evaluation framework:
-
-### Built-in Evaluators
-
-- **gpt4_judge**: General-purpose quality evaluation
-- Custom rubrics for specific use cases
-
-### Creating Custom Evaluators
-
-```python
-from infra.evals.llm_eval import LLMEvaluator
-from infra.evals.registry import evaluator
-
-@evaluator(id="domain_expert", version="1.0")
-class DomainExpertEvaluator(LLMEvaluator):
-    model = "openai/gpt-4o"
-
-    def build_messages(self, payload):
-        # Custom evaluation logic
-        return [...]
-```
-
-## 🔧 Configuration
-
-### Main Configuration (`config/config.json`)
-
-```json
-{
-  "redis": {
-    "host": "localhost",
-    "port": 6379,
-    "db": 0
-  },
-  "llm": {
-    "api_base": "https://api.openai.com/v1",
-    "models": {
-      "default_model": "openai/gpt-4o"
-    }
-  },
-  "ledger": {
-    "enabled": true,
-    "json_api_url": "http://localhost:7575",
-    "party_id": "p2engine::default",
-    "initial_balance": 100.0
-  }
-}
-```
-
-### Agent Configuration (`config/agents.yml`)
-
-```yaml
-agents:
-  - id: agent_alpha
-    type: llm
-    llm_model: "openai/gpt-4o"
-    tools: ["get_weather", "delegate", "check_balance", "transfer_funds"]
-
-  - id: treasurer
-    type: llm
-    llm_model: "openai/gpt-4o"
-    behavior_template: "financial_expert"
-    tools: ["check_balance", "transfer_funds", "transaction_history"]
-```
-
-## 🧪 Testing Scenarios
-
-### Multi-Agent Collaboration Test
-
-```bash
-p2engine chat with agent_alpha
-
-# Test delegation chain
-You> Check my balance
-You> Delegate to treasurer: Please distribute 100 units equally among agent_beta, agent_helper, and child
-You> Check my balance after delegation
-You> Show all recent transactions
-```
-
-### Concurrent Operations Test
-
-```bash
-# Terminal 1
-p2engine chat with agent_alpha
-You> Transfer 50 to agent_beta
-
-# Terminal 2 (simultaneously)
-p2engine chat with agent_beta
-You> Transfer 30 to agent_alpha
-```
-
-### Comprehensive Rollout Test
-
-```bash
-# Run all example rollouts
-p2engine rollout start config/demo_rollout.yml
-p2engine rollout start config/rollout_task_with_payment.yml
-p2engine rollout start config/rollout_competitive_payment.yml
-p2engine rollout start config/rollout_hierarchical_distribution.yml
-
-# Check results
-p2engine ledger overview
-p2engine ledger audit
-```
-
-## 📚 Key Concepts
-
-### Interaction Stack
-
-Each agent maintains a stack of interaction states (messages, tool calls, results) that can be branched and rewound.
-
-### Effects System
-
-Actions that modify external state (tool calls, delegations) are managed through an effects system with proper isolation and retry logic.
-
-### Artifact Bus
-
-All significant events and data are stored as artifacts with full provenance tracking.
-
-### Deduplication Policies
-
-- **none**: No deduplication
-- **penalty**: Track duplicates but allow execution
-- **strict**: Block duplicate side-effect operations
-
-## 🔍 Troubleshooting
-
-### Canton Connection Issues
+##### Canton Connection Issues
 
 ```bash
 # Check Canton health
 ./scripts/canton-health-check.sh
 
 # Debug ledger connection
-p2engine ledger debug
+p2engine▸ ledger debug
 
 # Restart Canton services
 pkill -f canton
 ./scripts/start_canton.sh
 ```
 
-### Redis Connection
+##### Redis Connection
 
 ```bash
 # Check Redis
@@ -579,7 +419,7 @@ redis-cli ping
 redis-cli FLUSHDB
 ```
 
-### View Logs
+##### View Logs
 
 ```bash
 # Main log
@@ -592,9 +432,53 @@ tail -f logs/run_*/workers/*.log
 tail -f logs/canton/*.log
 ```
 
+#### Core Modules
 
-**Tech (bare-bones):** [LiteLLM](https://docs.litellm.ai/), [Celery](https://docs.celeryq.dev/), [Redis](https://redis.io/), [Canton](https://www.canton.network/), [Daml](https://docs.daml.com/), [Poetry](https://python-poetry.org/), [Typer](https://typer.tiangolo.com/), [Rich](https://github.com/Textualize/rich), [Pydantic](https://docs.pydantic.dev/latest/), [OpenAI API](https://platform.openai.com/docs), [Jinja2](https://jinja.palletsprojects.com/), [JSON Schema](https://json-schema.org/).
+Here is what you could expect at the different modules:
 
+- **[`/agents`](./agents/README.md)** - Agent implementations and framework
 
----
+  - LLM, rule-based, and human-in-loop agents
+  - Tool registration and decorators
+  - Persona system and templates
+  - Agent factory and plugin system
 
+- **[`/orchestrator`](./orchestrator/README.md)** - Conversation flow management
+
+  - Interaction stack with branching support
+  - State machine and transitions
+  - LLM-compatible message rendering
+  - Agent and tool registries
+
+- **[`/runtime`](./runtime/README.md)** - Execution engine and task processing
+
+  - Agent runtime and state handlers
+  - Effect system for side effects
+  - Celery-based task distribution
+  - Rollout and evaluation execution
+
+- **[`/infra`](./infra/README.md)** - Core infrastructure components
+
+  - Configuration management
+  - Artifact bus for event storage
+  - LLM client abstraction
+  - Evaluation framework
+  - Session management
+
+- **[`/tools`](./tools/README.md)** - Extensible tool system
+
+  - Tool creation guide
+  - Built-in tools (delegate, ledger, weather)
+  - Caching and deduplication
+  - Post-effects system
+
+- **[`/services`](./services/README.md)** - Service layer and DI container
+
+  - ServiceContainer for dependency injection
+  - Canton/Daml ledger integration
+  - Thread-safe service management
+
+- **[`/cli`](./cli/README.md)** - Command-line interface
+  - Interactive chat system
+  - Configuration management
+  - Conversation inspection

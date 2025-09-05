@@ -2,11 +2,10 @@ from __future__ import annotations
 import os
 import json
 import time
+import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
-from venv import logger
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from cli.handlers.conversation import stack_view
 import typer
 from rich.console import Console
 from rich.live import Live
@@ -15,11 +14,18 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
-from runtime.rollout.engine import run_rollout, capture_ledger_snapshot
+from cli.handlers.conversation import stack_view
+from infra.logging.logging_config import logger
+from runtime.rollout.engine import run_rollout
 from runtime.rollout.spec import MultiRolloutSpec
 from runtime.rollout.store import RolloutStore
+from runtime.rollout.expander import expand_variants
 from services.services import ServiceContainer
-from infra.async_utils import run_async
+
+# Rerun viz helpers
+from infra.observability import rerun_rollout as rr_viz
+from infra.observability import rerun_obs as rr_obs
+from infra.observability.realtime_monitor import RealtimeStackMonitor
 
 app = typer.Typer(help="Run roll-outs and show a summary.")
 console = Console()
@@ -29,7 +35,21 @@ _RDS = _CONTAINER.get_redis_client()
 _STREAM = "stream:rollout_results"
 _STYLES = {"header": "bold cyan", "value": "white", "increase": "bold green", "decrease": "bold red"}
 
+# --------------------------- Rerun init ------------------------------------ #
+def _init_rerun_for_cli(rollout_id: str, *, spawn: bool = True) -> bool:
+    try:
+        spawn_effective = spawn and (os.getenv("RERUN_SPAWNED", "0") != "1")
+        ok = rr_obs.start_recording(rollout_id, spawn=spawn_effective)
+        if ok and spawn_effective:
+            os.environ["RERUN_SPAWNED"] = "1"
+        if ok:
+            logger.info("Rerun ready for rollout_id=%s (spawned=%s)", rollout_id, spawn_effective)
+        return ok
+    except Exception as e:
+        logger.warning("Failed to prepare Rerun for rollout %s: %s", rollout_id, e)
+        return False
 
+# -------------------------------- Utilities -------------------------------- #
 def _flatten(d: Dict, prefix: str = "") -> Dict[str, str]:
     out: Dict[str, str] = {}
     for k, v in d.items():
@@ -40,13 +60,11 @@ def _flatten(d: Dict, prefix: str = "") -> Dict[str, str]:
             out[key] = json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else str(v)
     return out
 
-
 def _collect_cfg_keys(rows: List[Dict]) -> List[str]:
     keys: Set[str] = set()
     for r in rows:
         keys.update(_flatten(r.get("overrides", {})).keys())
     return sorted(keys)
-
 
 def _rows_to_table(rows: List[Dict[str, Any]], *, with_config: bool = False) -> Table:
     tbl = Table(show_lines=False)
@@ -90,128 +108,32 @@ def _rows_to_table(rows: List[Dict[str, Any]], *, with_config: bool = False) -> 
         tbl.add_row(*row)
     return tbl
 
-
-def _display_ledger_changes(before_snapshot: Dict, after_snapshot: Dict, rollout_start_ts: Optional[float] = None) -> None:
-    if not before_snapshot.get("enabled") or not after_snapshot.get("enabled"):
-        return
-    console.rule("[bold]💰 Ledger State Changes[/bold]")
-    metrics_table = Table(title="System Metrics", show_lines=False)
-    metrics_table.add_column("Metric", style="cyan")
-    metrics_table.add_column("Before", style="yellow")
-    metrics_table.add_column("After", style="green")
-    metrics_table.add_column("Change", style="bold")
-    before_metrics = before_snapshot.get("metrics", {})
-    after_metrics = after_snapshot.get("metrics", {})
-    for metric in ["wallet_count", "total_balance", "transaction_count", "total_volume"]:
-        before_val = before_metrics.get(metric, 0)
-        after_val = after_metrics.get(metric, 0)
-        change = after_val - before_val
-        if metric in ["total_balance", "total_volume"]:
-            before_str = f"{before_val:.2f}"
-            after_str = f"{after_val:.2f}"
-            change_str = f"+{change:.2f}" if change >= 0 else f"{change:.2f}"
-        else:
-            before_str = str(int(before_val))
-            after_str = str(int(after_val))
-            change_str = f"+{int(change)}" if change >= 0 else str(int(change))
-        if change > 0:
-            change_txt = Text(change_str, style=_STYLES["increase"])
-        elif change < 0:
-            change_txt = Text(change_str, style=_STYLES["decrease"])
-        else:
-            change_txt = Text("0", style=_STYLES["value"])
-        metrics_table.add_row(metric.replace("_", " ").title(), before_str, after_str, change_txt)
-    console.print(metrics_table)
-    wallet_table = Table(title="Agent Wallet Changes", show_lines=False)
-    wallet_table.add_column("Agent", style="cyan")
-    wallet_table.add_column("Before", style="yellow", justify="right")
-    wallet_table.add_column("After", style="green", justify="right")
-    wallet_table.add_column("Change", style="bold", justify="right")
-    wallet_table.add_column("Rollout Txns", style="magenta", justify="center")
-    before_wallets = {w["agent_id"]: w for w in before_snapshot.get("wallets", [])}
-    after_wallets = {w["agent_id"]: w for w in after_snapshot.get("wallets", [])}
-    rollout_start_ts = before_snapshot.get("timestamp", 0)
-    agents_data = []
-    for agent_id in sorted(set(before_wallets.keys()) | set(after_wallets.keys())):
-        before = before_wallets.get(agent_id, {"balance": 0, "transactions": []})
-        after = after_wallets.get(agent_id, {"balance": 0, "transactions": []})
-        before_balance = float(before.get("balance", 0))
-        after_balance = float(after.get("balance", 0))
-        actual_change = after_balance - before_balance
-
-        # Count rollout transactions from the after snapshot
-        rollout_txs = 0
-        rollout_sent = 0.0
-        rollout_received = 0.0
-        for tx in after.get("transactions", []):
-            payload = tx.get("payload", {})
-            tx_timestamp = float(payload.get("timestamp", 0))
-            if tx_timestamp >= rollout_start_ts:
-                rollout_txs += 1
-                amount = float(payload.get("amount", 0))
-                if payload.get("fromAgent") == agent_id:
-                    rollout_sent += amount
-                elif payload.get("toAgent") == agent_id:
-                    rollout_received += amount
-
-        expected_change = rollout_received - rollout_sent
-
-        # Only log mismatch if it's significant (more than 0.01)
-        if abs(actual_change - expected_change) > 0.01:
-            logger.debug(
-                f"Balance calculation for {agent_id}: "
-                f"before={before_balance:.2f}, after={after_balance:.2f}, "
-                f"actual_change={actual_change:.2f}, expected_change={expected_change:.2f}, "
-                f"sent={rollout_sent:.2f}, received={rollout_received:.2f}"
-            )
-
-        agents_data.append(
-            {
-                "agent_id": agent_id,
-                "before_balance": before_balance,
-                "after_balance": after_balance,
-                "change": actual_change,
-                "rollout_txs": rollout_txs,
-                "rollout_sent": rollout_sent,
-                "rollout_received": rollout_received,
-                "has_activity": abs(actual_change) > 0.01 or rollout_txs > 0,
-            }
-        )
-    agents_data.sort(key=lambda x: (x["has_activity"], abs(x["change"]), x["rollout_txs"]), reverse=True)
-    for data in agents_data:
-        if not data["has_activity"]:
-            continue
-        change = data["change"]
-        if abs(change) > 0.01:
-            if change > 0:
-                change_txt = Text(f"+{change:.2f}", style=_STYLES["increase"])
-            else:
-                change_txt = Text(f"{change:.2f}", style=_STYLES["decrease"])
-        else:
-            change_txt = Text("0.00", style=_STYLES["value"])
-        tx_txt = f"+{data['rollout_txs']}" if data["rollout_txs"] > 0 else "0"
-        wallet_table.add_row(data["agent_id"], f"{data['before_balance']:.2f}", f"{data['after_balance']:.2f}", change_txt, tx_txt)
-    console.print(wallet_table)
-
+def _render_table_text(table: Table, width: int = 100) -> str:
+    tmp = Console(width=width, record=True)
+    tmp.print(table)
+    return tmp.export_text()
 
 def _config_table(rows: List[Dict[str, Any]]) -> Table:
     keys = _collect_cfg_keys(rows)
     tbl = Table(show_lines=False, header_style=_STYLES["header"])
-    tbl.add_column("team")
-    tbl.add_column("variant")
-    for k in keys:
-        tbl.add_column(k, overflow="fold")
+    tbl.add_column("team"); tbl.add_column("variant")
+    for k in keys: tbl.add_column(k, overflow="fold")
     for r in sorted(rows, key=lambda d: (d.get("team_id", ""), d.get("variant_id", ""))):
         flat = _flatten(r.get("overrides", {}))
         cells = [r.get("team_id", "?"), r.get("variant_id", "?")]
         for k in keys:
             v = flat.get(k, "–")
-            if len(v) > 25:
-                v = v[:22] + "…"
+            if len(v) > 25: v = v[:22] + "…"
             cells.append(v)
         tbl.add_row(*cells)
     return tbl
 
+def _flow_markdown(team_id: str, variant_id: str, lines) -> str:
+    buf = [f"{team_id} / {variant_id}", ""]
+    for ln in lines or []:
+        content = ln.content if len(ln.content) <= 120 else (ln.content[:117] + "…")
+        buf.append(f"{ln.idx:>3}  {ln.kind:<12}  {content}")
+    return "```text\n" + "\n".join(buf) + "\n```"
 
 def _print_flow(rows: List[Dict[str, Any]], *, n: int = 15) -> None:
     console.rule(f"[bold]Flow / stack preview (last {n} steps)")
@@ -229,150 +151,416 @@ def _print_flow(rows: List[Dict[str, Any]], *, n: int = 15) -> None:
             tbl.add_row(f"[dim]{ln.idx:>3}[/dim]  {ln.kind:<12}  {snippet}")
         console.print(Panel(tbl, title=f"{r['team_id']} / {r['variant_id']}"))
 
-
 def _aggregate_summary(rows: List[Dict[str, Any]]) -> Table:
     summary: Dict[str, Dict[str, float | int]] = {}
     for r in rows:
         team = r.get("team_id", "—")
-        t = summary.setdefault(
-            team, {"variants": 0, "best_score": 0.0, "tokens": 0, "cost": 0.0, "wall_time": 0.0, "total_paid": 0.0, "total_received": 0.0}
-        )
+        t = summary.setdefault(team, {"variants": 0, "best_score": 0.0, "tokens": 0, "cost": 0.0, "wall_time": 0.0, "total_paid": 0.0, "total_received": 0.0})
         t["variants"] += 1
         t["best_score"] = max(t["best_score"], float(r.get("score", 0.0)))
         t["tokens"] += int(r.get("tokens", 0))
         t["cost"] += float(r.get("cost", 0.0))
         t["wall_time"] = max(t["wall_time"], float(r.get("wall_time", 0.0)))
         net_flow = float(r.get("net_flow", 0.0))
-        if net_flow > 0:
-            t["total_received"] += net_flow
-        else:
-            t["total_paid"] += abs(net_flow)
+        if net_flow > 0: t["total_received"] += net_flow
+        else: t["total_paid"] += abs(net_flow)
     tbl = Table(header_style=_STYLES["header"])
     cols = ["team", "variants", "best score", "tokens", "cost $", "wall-time (s)"]
-    if any(t.get("total_paid", 0) > 0 or t.get("total_received", 0) > 0 for t in summary.values()):
+    if any(t.get("total_paid", 0) > 0 or t.get("total_received", 0) for t in summary.values()):
         cols.extend(["paid out", "received"])
-    for col in cols:
-        tbl.add_column(col, style=_STYLES["value"], justify="right")
+    for col in cols: tbl.add_column(col, style=_STYLES["value"], justify="right")
     for team, m in summary.items():
-        row = [
-            team,
-            str(m["variants"]),
-            f"{m['best_score']:.3f}",
-            f"{m['tokens']:,}",
-            f"{m['cost']:.4f}",
-            f"{m['wall_time']:.1f}",
-        ]
-        if "paid out" in cols:
-            row.extend([f"{m['total_paid']:.2f}", f"{m['total_received']:.2f}"])
+        row = [team, str(m["variants"]), f"{m['best_score']:.3f}", f"{m['tokens']:,}", f"{m['cost']:.4f}", f"{m['wall_time']:.1f}"]
+        if "paid out" in cols: row.extend([f"{m['total_paid']:.2f}", f"{m['total_received']:.2f}"])
         tbl.add_row(*row)
     return tbl
-
 
 def _parse_fields(fields: Dict[str, str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for k, v in fields.items():
-        try:
-            out[k] = json.loads(v)
-        except Exception:
-            out[k] = v
+        try: out[k] = json.loads(v)
+        except Exception: out[k] = v
     return out
 
+# --------------------------- Markov aggregator ------------------------------ #
+class _MarkovAgg:
+    """
+    Aggregates message kinds across all teams/variants to build a Markov-style
+    state diagram: nodes = kinds; edges = transitions between kinds.
+    Node radius ~ frequency; edge color ~ source kind color (via variant map).
+    """
+    ORDER = [
+        "UserMessage",
+        "AssistantMsg",
+        "ToolCall",
+        "ToolResult",
+        "AgentCall",
+        "AgentResult",
+        "WaitingState",
+        "FinishedState",
+    ]
 
-def _collect_rows(team_id: Optional[str], rollout_id: str, *, refresh: float = 2.0) -> List[Dict[str, Any]]:
-    store = RolloutStore(_RDS)
-    rows: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    last_id = "0-0"
-    with Live(console=console, refresh_per_second=max(1, int(1 / refresh))) as live:
-        while not store.is_done(rollout_id):
-            resp = _RDS.xread({_STREAM: last_id}, block=int(refresh * 1000), count=50)
-            for _stream, msgs in resp:
-                for sid, fields in msgs:
-                    last_id = sid
-                    data = _parse_fields(fields)
-                    if data.get("rollout_id") != rollout_id:
-                        continue
-                    if team_id and data.get("team_id") != team_id:
-                        continue
-                    var_id = str(data.get("variant_id"))
-                    if var_id in seen:
-                        continue
-                    seen.add(var_id)
-                    rows.append(data)
-            live.update(_rows_to_table(rows))
-    # Collect any final messages
-    resp = _RDS.xread({_STREAM: last_id}, block=10, count=50)
-    for _stream, msgs in resp:
-        for _sid, fields in msgs:
-            data = _parse_fields(fields)
-            if data.get("rollout_id") != rollout_id:
-                continue
-            if team_id and data.get("team_id") != team_id:
-                continue
-            var_id = str(data.get("variant_id"))
-            if var_id not in seen:
-                rows.append(data)
-                seen.add(var_id)
-    return rows
+    def __init__(self, radius: float = 260.0, center: tuple[float, float] = (0.0, 0.0)) -> None:
+        self.node_counts: Dict[str, int] = {}
+        self.edge_counts: Dict[tuple[str, str], int] = {}
+        self._kinds: List[str] = []
+        self._positions: Dict[str, tuple[float, float]] = {}
+        self._radius = radius
+        self._center = center
+
+    def add_lines(self, lines: List[Any]) -> None:
+        if not lines:
+            return
+        for ln in lines:
+            k = getattr(ln, "kind", "Unknown")
+            self.node_counts[k] = self.node_counts.get(k, 0) + 1
+            if k not in self._kinds:
+                self._kinds.append(k)
+        for a, b in zip(lines[:-1], lines[1:]):
+            ka = getattr(a, "kind", "Unknown")
+            kb = getattr(b, "kind", "Unknown")
+            key = (ka, kb)
+            self.edge_counts[key] = self.edge_counts.get(key, 0) + 1
+
+    def _ensure_layout(self) -> None:
+        if self._positions:
+            return
+        kinds = sorted(set(self._kinds), key=lambda k: (self.ORDER.index(k) if k in self.ORDER else 999, k))
+        if not kinds:
+            return
+        cx, cy = self._center
+        n = len(kinds)
+        for i, k in enumerate(kinds):
+            theta = 2.0 * math.pi * (i / n)
+            x = cx + self._radius * math.cos(theta)
+            y = cy + self._radius * math.sin(theta)
+            self._positions[k] = (x, y)
+
+    def to_graph(self) -> tuple[List[tuple[float, float]], List[Dict[str, str]], List[tuple[int, int]]]:
+        self._ensure_layout()
+        kinds = list(self._positions.keys())
+        idx = {k: i for i, k in enumerate(kinds)}
+        positions = [self._positions[k] for k in kinds]
+        # Use `variant=k` so each kind has a stable distinct color
+        node_meta = [{"team": "world", "variant": k, "kind": k, "latency": str(self._node_radius_scale(k))} for k in kinds]
+        edges: List[tuple[int, int]] = []
+        for (ka, kb), _cnt in self.edge_counts.items():
+            if ka in idx and kb in idx:
+                edges.append((idx[ka], idx[kb]))
+        return positions, node_meta, edges
+
+    def _node_radius_scale(self, kind: str) -> float:
+        # Normalize counts to [0, 1.4] (because log_graph_static multiplies by 10 & caps)
+        cmax = max(self.node_counts.values()) if self.node_counts else 1
+        return 1.4 * (self.node_counts.get(kind, 0) / cmax)
 
 
+# -----------------------------------------------------------------------------
+# Streaming collector with REAL-TIME monitoring
+# -----------------------------------------------------------------------------
+def _collect_rows(
+   team_id: Optional[str],
+   rollout_id: str,
+   *,
+   refresh: float = 2.0,
+   to_rerun: bool = False,
+   teams_for_tabs: Optional[List[str]] = None,
+   variants_for_tabs: Optional[List[Tuple[str, str]]] = None,
+   step_sec: float = 0.15,
+   animate: bool = True,
+   realtime: bool = True,
+) -> List[Dict[str, Any]]:
+   store = RolloutStore(_RDS)
+   rows: List[Dict[str, Any]] = []
+   seen: set[str] = set()
+   last_id = "0-0"
+
+   # Initialize real-time monitor if Rerun is enabled
+   monitor = None
+   if to_rerun and realtime:
+       monitor = RealtimeStackMonitor(
+           _RDS,
+           _CONTAINER,
+           rollout_id,
+           refresh_rate=0.5,
+           step_sec=step_sec
+       )
+       # Initialize Markov aggregator and set it on monitor
+       markov = _MarkovAgg()
+       monitor.set_markov(markov)
+       monitor.start()
+       logger.info("Started real-time stack monitoring for rollout %s", rollout_id)
+
+   # Fallback for non-realtime mode
+   team_docs: Dict[str, List[str]] = {t: [f"# {t}\n"] for t in (teams_for_tabs or [])}
+   markov_fallback = _MarkovAgg() if not monitor else None
+   last_line_idx: Dict[tuple[str, str], int] = {}
+   t_anim: float = 0.0
+   step = max(0.01, float(step_sec))
+
+   with Live(console=console, refresh_per_second=max(1, int(1 / refresh))) as live:
+       while not store.is_done(rollout_id):
+           resp = _RDS.xread({_STREAM: last_id}, block=int(refresh * 1000), count=50)
+           for _stream, msgs in resp:
+               for sid, fields in msgs:
+                   last_id = sid
+                   data = _parse_fields(fields)
+                   if data.get("rollout_id") != rollout_id:
+                       continue
+                   if team_id and data.get("team_id") != team_id:
+                       continue
+                   var_id = str(data.get("variant_id"))
+                   if var_id in seen:
+                       continue
+                   seen.add(var_id)
+                   rows.append(data)
+
+                   # Register conversation with monitor
+                   if monitor:
+                       cid = data.get("conversation_id")
+                       if cid:
+                           team = str(data.get("team_id", "?"))
+                           monitor.register_conversation(cid, team, var_id)
+                   
+                   # Fallback processing if not using realtime monitor
+                   elif to_rerun:
+                       try:
+                           team = str(data.get("team_id", "?"))
+                           cid = data.get("conversation_id")
+                           lines = stack_view(_CONTAINER, cid, n=50) if cid else None
+
+                           if lines:
+                               # Stream team logs
+                               key = (team, var_id)
+                               last_seen = last_line_idx.get(key, -1)
+                               new_lines = [ln for ln in lines if ln.idx > last_seen]
+                               for ln in new_lines:
+                                   rr_viz.log_stack_line(
+                                       rollout_id,
+                                       team,
+                                       var_id,
+                                       idx=int(ln.idx),
+                                       kind=getattr(ln, "kind", ""),
+                                       content=getattr(ln, "content", ""),
+                                       t_step=t_anim,
+                                   )
+                                   t_anim += step * 0.5
+
+                               if new_lines:
+                                   last_line_idx[key] = max(ln.idx for ln in new_lines)
+
+                               # Update team doc
+                               team_docs.setdefault(team, [f"# {team}\n"])
+                               team_docs[team].append(f"\n## {var_id}\n")
+                               preview = lines[-15:]
+                               team_docs[team].append(_flow_markdown(team, var_id, preview))
+                               rr_viz.log_team_stack_doc(rollout_id, team, "".join(team_docs[team]))
+
+                               # Update Markov graph
+                               if markov_fallback:
+                                   markov_fallback.add_lines(lines)
+                                   positions, meta, edges = markov_fallback.to_graph()
+                                   if positions:
+                                       rr_viz.log_graph_static(rollout_id, positions, meta, edges)
+
+                                   if animate and new_lines:
+                                       events = []
+                                       for a, b in zip(new_lines[:-1], new_lines[1:]):
+                                           ka, kb = getattr(a, "kind", ""), getattr(b, "kind", "")
+                                           pos_map = {m["variant"]: positions[i] for i, m in enumerate(meta)}
+                                           if ka in pos_map and kb in pos_map:
+                                               events.append({"t": t_anim, "variant": var_id, "p1": list(pos_map[ka]), "p2": list(pos_map[kb])})
+                                               t_anim += step
+                                       if events:
+                                           rr_viz.log_graph_events(rollout_id, events, timeline="step")
+                       except Exception:
+                           pass
+
+           live.update(_rows_to_table(rows))
+
+   # Stop the monitor
+   if monitor:
+       monitor.stop()
+       logger.info("Stopped real-time stack monitoring")
+
+   # Drain late messages
+   resp = _RDS.xread({_STREAM: last_id}, block=10, count=50)
+   for _stream, msgs in resp:
+       for _sid, fields in msgs:
+           data = _parse_fields(fields)
+           if data.get("rollout_id") != rollout_id:
+               continue
+           if team_id and data.get("team_id") != team_id:
+               continue
+           var_id = str(data.get("variant_id"))
+           if var_id not in seen:
+               rows.append(data)
+               seen.add(var_id)
+               
+               # Final update for late arrivals (non-realtime mode)
+               if to_rerun and not monitor:
+                   try:
+                       team = str(data.get("team_id", "?"))
+                       cid = data.get("conversation_id")
+                       lines = stack_view(_CONTAINER, cid, n=50) if cid else None
+                       if lines:
+                           key = (team, var_id)
+                           last_seen = last_line_idx.get(key, -1)
+                           new_lines = [ln for ln in lines if ln.idx > last_seen]
+                           for ln in new_lines:
+                               rr_viz.log_stack_line(
+                                   rollout_id,
+                                   team,
+                                   var_id,
+                                   idx=int(ln.idx),
+                                   kind=getattr(ln, "kind", ""),
+                                   content=getattr(ln, "content", ""),
+                                   t_step=t_anim,
+                               )
+                               t_anim += step * 0.5
+                           if new_lines:
+                               last_line_idx[key] = max(ln.idx for ln in new_lines)
+
+                           team_docs.setdefault(team, [f"# {team}\n"])
+                           team_docs[team].append(f"\n## {var_id}\n")
+                           preview = lines[-15:]
+                           team_docs[team].append(_flow_markdown(team, var_id, preview))
+                           rr_viz.log_team_stack_doc(rollout_id, team, "".join(team_docs[team]))
+
+                           if markov_fallback:
+                               markov_fallback.add_lines(lines)
+                               positions, meta, edges = markov_fallback.to_graph()
+                               if positions:
+                                   rr_viz.log_graph_static(rollout_id, positions, meta, edges)
+
+                               if animate and new_lines:
+                                   events = []
+                                   for a, b in zip(new_lines[:-1], new_lines[1:]):
+                                       ka, kb = getattr(a, "kind", ""), getattr(b, "kind", "")
+                                       pos_map = {m["variant"]: positions[i] for i, m in enumerate(meta)}
+                                       if ka in pos_map and kb in pos_map:
+                                           events.append({"t": t_anim, "variant": var_id, "p1": list(pos_map[ka]), "p2": list(pos_map[kb])})
+                                           t_anim += step
+                                   if events:
+                                       rr_viz.log_graph_events(rollout_id, events, timeline="step")
+                   except Exception:
+                       pass
+
+   return rows
+
+# --------------------------------- Command --------------------------------- #
 @app.command("start")
 def start(
-    spec_path: Path = typer.Argument(..., exists=True, readable=True),
-    parallel: int | None = typer.Option(None, "--parallel", "-p", help="Desired parallelism hint"),
-    nowait: bool = typer.Option(False, "--nowait", help="Launch and return immediately"),
-    show_config: bool = typer.Option(False, "--show-config", help="Print the expanded rollout spec and exit"),
-    follow: bool = typer.Option(False, "--follow", "-f", help="Live-update while running (all teams together)"),
-    refresh: float = typer.Option(2.0, "--refresh", "-r", help="Polling interval while following (seconds)"),
-    strict_tools: bool = typer.Option(False, "--strict-tools", help="Enforce strict persona/tool validation"),
+   spec_path: Path = typer.Argument(..., exists=True, readable=True),
+   parallel: int | None = typer.Option(None, "--parallel", "-p", help="Desired parallelism hint"),
+   nowait: bool = typer.Option(False, "--nowait", help="Launch and return immediately"),
+   show_config: bool = typer.Option(False, "--show-config", help="Print the expanded rollout spec and exit"),
+   follow: bool = typer.Option(False, "--follow", "-f", help="Live-update while running (all teams together)"),
+   refresh: float = typer.Option(2.0, "--refresh", "-r", help="Polling interval while following (seconds)"),
+   strict_tools: bool = typer.Option(False, "--strict-tools", help="Enforce strict persona/tool validation"),
+   rerun: bool = typer.Option(False, "--rerun", help="Open/attach Rerun and visualize config + metrics/graph/team"),
+   step_sec: float = typer.Option(0.15, "--step-sec", help="Seconds-per-step for world-graph animation"),
+   animate: bool = typer.Option(True, "--animate/--no-animate", help="Animate transitions on the world graph"),
+   realtime: bool = typer.Option(True, "--realtime/--no-realtime", help="Enable real-time stack monitoring (requires --rerun)"),
 ) -> None:
-    multi_spec: MultiRolloutSpec = MultiRolloutSpec.load(spec_path)
-    if show_config:
-        console.print(multi_spec.model_dump_json(indent=2))
-        raise typer.Exit()
-    console.print(f"[{_STYLES['header']}]▶ Launching roll-out with {len(multi_spec.teams)} teams…[/{_STYLES['header']}]")
-    rollout_id = run_rollout(multi_spec, parallel_hint=parallel, strict_tools=strict_tools)
-    if nowait:
-        console.print(f"Roll-out launched – rollout_id = [bold]{rollout_id}[/bold]")
-        raise typer.Exit()
-    store = RolloutStore(_RDS)
-    if follow:
-        rows = _collect_rows(None, rollout_id, refresh=refresh)
-    else:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("{task.completed}/{task.total}"),
-            transient=True,
-        ) as progress:
-            completed, total = store.progress(rollout_id)
-            task = progress.add_task("Running variants…", total=max(total, 1), completed=completed)
-            while not store.is_done(rollout_id):
-                new_completed, total = store.progress(rollout_id)
-                progress.update(task, total=max(total, 1), completed=new_completed)
-                time.sleep(refresh)
-        rows = _collect_rows(None, rollout_id, refresh=refresh)
-    agent_ids_json = _RDS.get(f"rollout:{rollout_id}:agents")
-    agent_ids = []
-    if agent_ids_json:
-        agent_ids = json.loads(agent_ids_json)
-    before_snapshot = None
-    after_snapshot = None
-    if os.getenv("LEDGER_ENABLED", "true") == "true":
-        before_json = _RDS.get(f"rollout:{rollout_id}:snapshot:before")
-        if before_json:
-            before_snapshot = json.loads(before_json)
-        if agent_ids:
-            after_snapshot = run_async(capture_ledger_snapshot("after_rollout", agent_ids, wait_for_settle=True))
-            _RDS.set(f"rollout:{rollout_id}:snapshot:after", json.dumps(after_snapshot), ex=86400)
-    console.rule("[bold]Roll-out Metrics (per variant)")
-    console.print(_rows_to_table(rows))
-    console.rule("[bold]Variant Configuration")
-    console.print(_config_table(rows))
-    console.rule("[bold]Team Aggregate")
-    console.print(_aggregate_summary(rows))
-    if before_snapshot and after_snapshot:
-        rollout_start_ts = before_snapshot.get("timestamp")
-        _display_ledger_changes(before_snapshot, after_snapshot, rollout_start_ts)
-    _print_flow(rows)
+   multi_spec: MultiRolloutSpec = MultiRolloutSpec.load(spec_path)
+   if show_config:
+       console.print(multi_spec.model_dump_json(indent=2))
+       raise typer.Exit()
+
+   # Prepare data for views
+   variants_for_tabs: list[tuple[str, str]] = []
+   teams_for_tabs: list[str] = []
+   for team_id, team_spec in multi_spec.teams.items():
+       teams_for_tabs.append(team_id)
+       variants = expand_variants(team_spec)
+       for idx, _ in enumerate(variants):
+           variants_for_tabs.append((team_id, f"{team_id}:v{idx:03d}"))
+
+   console.print(f"[{_STYLES['header']}]▶ Launching roll-out with {len(multi_spec.teams)} teams…[/{_STYLES['header']}]")
+   rollout_id = run_rollout(multi_spec, parallel_hint=parallel, strict_tools=strict_tools)
+
+   # Optional Rerun visualization
+   to_rerun = False
+   if rerun:
+       to_rerun = _init_rerun_for_cli(rollout_id, spawn=True)
+       if to_rerun:
+           try:
+               rr_viz.send_rollout_blueprint(rollout_id, spec_path.name, variants_for_tabs, teams_for_tabs)
+               yaml_text = spec_path.read_text(encoding="utf-8", errors="ignore")
+               rr_viz.log_rollout_yaml(rollout_id, str(spec_path), yaml_text)
+           except Exception:
+               pass
+
+   if nowait:
+       console.print(f"Roll-out launched – rollout_id = [bold]{rollout_id}[/bold]")
+       raise typer.Exit()
+
+   store = RolloutStore(_RDS)
+
+   if follow:
+       rows = _collect_rows(
+           None,
+           rollout_id,
+           refresh=refresh,
+           to_rerun=to_rerun,
+           teams_for_tabs=teams_for_tabs,
+           variants_for_tabs=variants_for_tabs,
+           step_sec=step_sec,
+           animate=animate,
+           realtime=realtime,
+       )
+   else:
+       with Progress(
+           SpinnerColumn(),
+           TextColumn("[progress.description]{task.description}"),
+           BarColumn(),
+           TextColumn("{task.completed}/{task.total}"),
+           transient=True,
+       ) as progress:
+           completed, total = store.progress(rollout_id)
+           task = progress.add_task("Running variants…", total=max(total, 1), completed=completed)
+           while not store.is_done(rollout_id):
+               new_completed, total = store.progress(rollout_id)
+               progress.update(task, total=max(total, 1), completed=new_completed)
+               time.sleep(refresh)
+       
+       # Use realtime monitoring even in non-follow mode if rerun is enabled
+       rows = _collect_rows(
+           None,
+           rollout_id,
+           refresh=refresh,
+           to_rerun=to_rerun,
+           teams_for_tabs=teams_for_tabs,
+           variants_for_tabs=variants_for_tabs,
+           step_sec=step_sec,
+           animate=animate,
+           realtime=realtime and to_rerun,
+       )
+
+   # After run completes, mirror the table in Rerun
+   if to_rerun:
+       try:
+           metrics_text = _render_table_text(_rows_to_table(rows))
+           rr_viz.log_cli_metrics(rollout_id, metrics_text)
+       except Exception:
+           pass
+
+   # READ ONLY snapshots as before
+   bj = _RDS.get(f"rollout:{rollout_id}:snapshot:before")
+   aj = _RDS.get(f"rollout:{rollout_id}:snapshot:after")
+   before_snapshot = json.loads(bj) if bj else None
+   after_snapshot = json.loads(aj) if aj else None
+   del before_snapshot, after_snapshot
+
+   # Console output
+   console.rule("[bold]Roll-out Metrics (per variant)")
+   console.print(_rows_to_table(rows))
+
+   console.rule("[bold]Variant Configuration")
+   console.print(_config_table(rows))
+
+   console.rule("[bold]Team Aggregate")
+   console.print(_aggregate_summary(rows))
+
+   _print_flow(rows)
