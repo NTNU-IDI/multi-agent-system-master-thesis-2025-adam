@@ -8,7 +8,7 @@
 - [Evals](#evals)
 - [Agents](#agents-configagentsyml)
 - [Tools](#tools)
-- [Ledger Operations](#ledger-operations)
+- [Ledger](#ledger)
 - [Branching](#branching)
 - [Configuration Overrides](#configuration-overrides)
 - [Health of the System](#health-of-the-system)
@@ -283,7 +283,7 @@ agents:
   - id: treasurer
     type: llm
     llm_model: "openai/gpt-4o"
-    behavior_template: "financial_expert"
+    behavior_template: "weather_expert"
     tools: ["check_balance", "transfer_funds", "transaction_history"]
 ```
 
@@ -317,9 +317,9 @@ def search_database(query: str, limit: int = 10) -> dict:
     }
 ```
 
-#### Ledger Operations
+#### Ledger
 
-And yes P2Engine is extended with a full ledger, it uses Canton Network, and DAML as the smart contract language..
+And yes P2Engine is extended with a local ledger, it uses Canton Network, and DAML as the smart contract language. The local Canton instance has test tokens.
 
 ##### Initialize Wallets
 

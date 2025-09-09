@@ -5,23 +5,22 @@
 <b> A framework + runtime to build, run, and evaluate multi-agent systems. Extended with the Canton Network to enable monetary incentives, payments, and audits. </b> 
 </div>
 <br>
-<div align="center">
-"Coordinate agents, evaluate each step, store trajectories, replay & observe"
+<div align="center"> orchestrate agents • evaluate each step • branch & rewind • trajectories & artifacts • replay & observe
 </div>
 
 ---
 
 The full framework lives inside the [`p2engine/`](p2engine/) directory, with setup instructions and detailed documentation in [`p2engine/README.md`](p2engine/README.md).
 
-I’ve also written an article on P2Engine, the research , the ideas, tech, and more.. [Read it here →](https://www.adamsioud.com/projects/p2engine.html)
+P2Engine is the artifact of my master’s thesis. You can read it here [`thesis`](thesis/p2engine_thesis_adam_sioud_ntnu.pdf), where I explore and optimistically define what makes a system autonomous.
 
-[Showcase](#showcase) • [P2Engine](#p2engine) • [Rollouts](#rollouts) • [Ledger](#ledger) • [Architecture Diagrams](#architecture-diagrams) • [Future](#future)
+I’ve also written an article on P2Engine, more of a dabble into all the research, the ideas, visions, tangents, and everything around P2Engine and the thesis. [Read it here →](https://www.adamsioud.com/projects/p2engine.html)
+
+[Showcase](#showcase) • [How It Works](#how-it-works) • [Rollouts](#rollouts) • [Ledger](#ledger) • [How It Works (Diagrams)](#how-it-works-diagrams) • [Future](#future)
 
 ---
 
 ## Showcase
-
-_Click any demo below for a full video demonstration_
 
 <!-- Centered 2×2 demo gallery that works on GitHub -->
 <div align="center">
@@ -50,38 +49,52 @@ _Click any demo below for a full video demonstration_
       </td>
       <td align="center" width="420">
         <a href="https://www.adamsioud.com/projects/p2engine.html?v=e4">
-          <img src="demos/thumbs/e4_320x180.gif" alt="Ledger Operations">
+          <img src="demos/thumbs/e4_320x180.gif" alt="Ledger">
         </a><br>
-        <sub><b>Ledger Operations</b></sub>
+        <sub><b>Ledger</b></sub>
       </td>
     </tr>
   </table>
 <p><em>Click any demo for a full video demonstration</em></p>
 </div>
 
-**Agent Delegation** — Agents can delegate tasks to sub-agents, and conversation state is tracked.
+**Agent Delegation** — Agents delegate tasks to sub-agents. Conversation context is preserved across all agent interactions.
 
-**Branch Rewind** — Rewind a conversation to x state, branch identifiers preseve causality, and bracnhes could be checked in&out from. Branch / Rewind — Fork a trajectory at step k; branch IDs preserve causality for comparison.
+**Branch Rewind** — Rewind conversations to any point and explore alternative paths. Switch between different conversation branches.
 
-**Rollouts** — Use rollouts, with rollouts you can configure rubrics, agent teams, and variants, and then test them across different scenarios and tools. Coupled with rerun visualization get a full observablity and track it all. Rerun (viewer) logging & visualization.
+**Rollouts** — Run multiple agent configurations simultaneously, A/B testing. Compare performance metrics (artifacts, reward, token usage, costs, ledger transactions, speed, and more) and visualize results in real-time.
 
-**Ledger Operations** — [maybe dont want the word ledger operations] Agents maintain wallets on Canton Network, perform autonomous transfers, and all transactions are immutably recorded.
+**Ledger** — Agents have wallets and can transfer funds. All transactions are recorded with complete audit trails.
 
 ---
 
-## P2Engine
+## How It Works
 
-[we need a better title to say here, like we are describing p2engine in full yes, hmm]
+P2Engine's architecture and internals are inspired by a beautiful and well-thought-out blueprint laid down by [Erik](https://eriksfunhouse.com). His architecture proposal and taste for systems, what is an agent, tools, prompt templates, reasoning etc. have guided P2Engine to what it is today. A big recommendation: check out his series, here is [Part 1](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_1/), and then continue to [Part 2](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_2/), [Part 3](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_3/), and [Part 4](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_4/).
 
-P2Engine's architecture and internals are inspired by a beautiful and well-thought-out blueprint laid down by [Erik](https://eriksfunhouse.com). His architecture proposal and taste for systems, agents, tools, prompt templates, etc. have guided P2Engine to what it is today. A total recommendation: check out his series, here is [Part 1](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_1/), and then continue to [Part 2](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_2/), [Part 3](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_3/), and [Part 4](https://eriksfunhouse.com/writings/state_machines_for_multi_agent_part_4/).
+P2Engine’s orchestration is fundamentally built on finite state machine (FSM) principles, where each agent conversation progresses through well-defined states with explicit transition rules.
 
-P2Engine’s orchestration is fundamentally built on finite state machine (FSM) principles, where each agent conversation progresses through well-defined states with explicit transition rules. This approach provides predictable behavior while enabling complex multi-agent interactions.
+It runs LLM-agents in discrete steps. Each step produces artifacts, and a separate and async evaluator scores them. You can think of it like this: the agent thinks, acts, and creates something; the evaluator observes, scores.
 
-At its core, P2Engine runs LLM-agents in discrete steps. Each step produces artifacts, and a separate and async evaluator scores them. You can think of it like this: the agent thinks, acts, and creates something; the evaluator observes, scores, then which is not yet implemented the root/router or evaluator takes the feedback then decides the next tool, step, or configuration. [hmm this needs to be clearer written kinda, and also is a tad bit negative no?]
+**Finite State Machine**
 
-[before the ramble which i like, aybe we are missing one or two paragrpahs to explain p2engine here? hmm]
+Each agent conversation moves through well-defined states: UserMessage → AssistantMessage or ToolCall → ToolResult → AssistantMessage, with WaitingState managing async operations. Agent delegation adds AgentCall/AgentResult states, and conversations end with FinishedState. This explicit state management makes it easier to create reliable coordination and to debug the systems.
 
-So To ramble, and quickly summaries what P2Engine has, it gives us agent interfaces, tool registry, templates/personas, runtime policies. A pushdown automata esque, it is a finite state machine with an interaction stack. It has branching, rewind, artifacts and an artifacts bus, Redis-backed session/state. Judge prompts, metrics, branch scoring, rollout experimentation. Chat, artifacts inspect/diff, rollouts, ledger ops, conversation watch. Rich logs; optional with rerun views and real-time log print outs. And the ledger (Canton/DAML) integration gives us balances, transfers, and audit trails.
+**Interaction Stack**
+
+Every agent maintains a stack storing complete interaction history. This enables conversation rewinding, branch creation for alternative paths, and preserved context across agent handoffs.
+
+**Effect-Based Execution**
+
+Agent decisions generate "effects" (tool calls, payments, delegations) that execute asynchronously via Celery workers.
+
+**Artifact Evaluation**
+
+Every agent action produces artifacts that evaluators score automatically.
+
+**Ledger**
+
+Canton/DAML ledger integration provides agent wallets, automated payments, and immutable audit trails. Agents can earn rewards for the quality of work they do, with all transactions recorded in immutable audit trails.
 
 ---
 
@@ -95,66 +108,73 @@ So To ramble, and quickly summaries what P2Engine has, it gives us agent interfa
   <em>Click for a full video demonstration</em>
 </p>
 
-To test how P2Engine was working I used a combination of chat and rollouts. Rollouts became the primary way to sort of simulate stuff and see interactions, logs, and transactions on the ledger. This means in it's current form it's a bit sided to facilitate more of experimental cases and where the current configuration files (e.g., [p2engine/config/rollout_joke.yml](p2engine/config/rollout_joke.yml)) are more examples of simulations rather than true A/B testing.
+_To test how P2Engine was working I used a combination of chat and rollouts. Rollouts became the primary way to sort of simulate stuff and see the interactions, debug/inspect the logs, and inspect the transactions happening on the ledger. This means in its current form, it's a bit sided to facilitate more of experimental cases and this is reflected in the current configuration files (e.g., [rollout_joke.yml](p2engine/config/rollout_joke.yml)). They are more examples of simulations rather than true A/B tests._
 
-But that dosent mean the plumbing is not support rollouts, becuase that is what it is. It is set up such that the rollout system provides A/B testing capabilities for systematically comparing different agent configurations, tool combinations, and behavioral parameters. Implemented in the [runtime/rollout/](p2engine/runtime/rollout/) module, and it works nice with the Celery task system so we get distributed execution, enabling parallel evaluation of multiple configuration variants. And as stated, the rollout system uses YAML configuration files to define rollout experiments, specifying teams, base settings, variants, and evaluation criteria. From a rollout we get metrics, visualizations, through P2Engine shell, logs, and rerun. We get to audit and see the transactions that happen during, and we get to replay, inspect and x. [maybe we need to talk about hooked into a eval in this and rewards emtrics?]
+**But the infrastructure does supports proper rollouts**
 
-What rollouts are they set the stage for the proper learning loop p2eninge is base for. the missing part in true, is the fedeback to root. [let's make this a tad better but i like the hook into and explination here]
+The rollout system provides A/B testing capabilities for systematically comparing agent configurations, tool combinations, and parameters. Built in the [runtime/rollout/](p2engine/runtime/rollout/) module with Celery integration, it enables a simple distributed execution and parallel evaluation of multiple variants.
 
-Define team, variant, rubric/judge, metrics. Link to rollout_joke.yml.
-Rollout — An experiment spec (YAML) that defines a team, variants, rubrics, and metrics to run in parallel.
-Evaluator status: “Evaluator scores are produced today; automatic prompt/routing updates based on rewards are planned.”
-Rollouts: “Designed for controlled experiments; great for A/B variants of prompts, tools, or models.”
-[help me out here chat..]
+**How It Works**
+
+Create YAML configuration files that specify teams, base settings, and variants. The system expands these into individual experiments, runs them in parallel using Celery workers, and collects the metrics. Metrics are conversation artifacts, rewards, token usage, costs, ledger transactions, speed.
+
+**Real-time Monitoring**
+
+We can watch rollouts unfold through the P2Engine CLI with live progress tables, and stream to Rerun viewer for more visual monitoring. Rerun can also be used to replay, rewind and inspect our rollouts. Each variant gets automatic evaluation scores, and the system aggregates results for easy comparison of what works best.
+
+**The Foundation for Learning**
+
+Rollouts is the key infrastructure to enable P2Engine's future learning loop. Currently, evaluators score agent outputs automatically, so the next step is to close the loop and use these scores to automatically propagate successful configurations to underperforming variants, creating a system that improves itself through experimentation. Something like that, there are many ways here, and I will talk about that in the [Future](#future) section.
 
 ---
 
 ## Ledger
 
-[is it leger that will call it? this is like the question im asking myself ledger, ledger operations]
+The idea behind the ledger is to introduce monetary incentives, payments, and audits into multi-agent systems. P2Engine does this by integrating Canton/DAML technology, building toward the vision of the Canton Network while currently running on a local development instance. Agents have wallets, can transfer funds, and earn rewards based on performance. All transactions are recorded in immutable audit trails. The ledger is optional when running P2Engine.
 
-In addition to all these great stuff, With Eriks ideas we have something that, and it made it simple to extend it with canton network for us. Here we do.. We extend P2Engine with the integration of distributed-ledger technology to provide immutable audit trails, privacy-aware operations, and verifiable accountability for all agent actions and financial transactions. This ensures that the system maintains a permanent, tamper-evident record of all significant operations, supporting both regulatory compliance and its own system verification.
+**Agent Wallets & Transfers**
 
-[This sounds very yappy]
-[ i dont like all this yapp we need ajort imrpovemnt
-the comment about that erik ideas we don nede that here]
+Each agent gets a wallet managed by DAML smart contracts that enforce validation rules. Agents can transfer funds to each other, with automatic overdraft protection and complete transaction history. Currently implemented as a local Canton instance with test tokens for experimentation and development.
 
-- Canton Network/DAML integration: Ledger operations implemented in services/canton_ledger_service.py.
-- Financial accountability: Agent wallets, transfers, and transaction history logged on-chain.
-- Complete audit trails: Every interaction and side-effect routed through ledger hooks in infra/ledger_hooks.py.
+**Tools**
 
-Why canton? needs to be better, but just say some clean stuf 1 , 2 sentences. Canton Network, The network of networks as they say, currently in our framework here it serves as a great enable to test out working with a ledger for some basic stuff. It gives us and it has the functions which something like P2Engine in the future will happen to like to explore such as, more on this and why -> artilce [this is oki to say but maybe as like a middle or last pargrpah or in start but yeh]
+Agents use standard tools like transfer_funds, check_balance, and reward_agent, see [ledger_tools.py](p2engine/tools/ledger_tools.py). The system automatically tracks all financial activity during conversations and rollouts.
 
-Ledger: “Optional, permissioned ledger integration (Canton/Daml) for accountability and incentive experiments.”
+**Incentive Alignment**
 
-ledger operations -> on-ledger actions
+Through the evaluators in P2Engine, agents earn rewards/payments for quality work during rollouts. The current implementation includes basic reward mechanisms based on evaluation scores, providing a foundation for more sophisticated economic coordination research.
 
-on the Canton ledger.
+**Audit Trails**
+
+Every transaction flows through the artifact bus, creating permanent records. Rollouts capture before/after ledger snapshots, enabling experiments with agent economic behavior and resource allocation strategies.
+
+**Why Canton**
+
+Canton provides smart contract validation, privacy-preserving operations, and the robust infrastructure needed for financial accountability. P2Engine's current local Canton setup serves as a development environment and research platform, with the architecture designed to potentially connect to the broader Canton Network ecosystem as it evolves.
+
 <br>
 
 ---
 
-## Architecture Diagrams
+## How It Works (Diagrams)
 
-lets go some diagrams to get some intution, this is not like the core but yeh
-[i like to have commenct like this and also ofc better tilte than archtirue diagrams but yup]
+Let's do How It Works again, but this time with four diagrams to better learn about P2Engine.
 
 #### Execution Sequence
 
 <p align="center">
   <img src="p2engine/docs/architecture/execution-sequence.png" alt="Execution Sequence" width="820">
-  <br>
-  <em>Execution Sequence Flow</em>
+  <em>Sequence Diagram</em>
 </p>
 
-The system execution follows the sequence shown in our figure here [figure maybe wrong word], demonstrating end-to-end integration across all architectural layers. The execution unfolds through six integrated stages:
+The execution process follows the interactions shown in the Sequence Diagram, illustrating how P2Engine operates end-to-end.
 
 - **Agent Processing** — Consumes conversation states and produces responses or tool invocations.
 - **Tool Execution** — Runs asynchronously, publishing results back into the conversation streams.
-- **State Progression** — Captures every activity as state transitions flowing through the orchestration layer.
-- **Event Publication** — Automatically pushes those state changes to the observability layer for real-time monitoring and analysis.
-- **Evaluation Triggering** — Fires upon conversation completion or significant milestones, invoking automated quality assessments.
-- **Adaptation Feedback** — Uses evaluation results to refine future agent configurations via the adaptation layer.
+- **Event Publication** — Broadcasts state-change events so they can be logged, traced, or visualized in real time.
+- **Evaluation Triggering** — Runs automated evaluation when a conversation completes or a "configured" step is
+  reached.
+- **Reward Settlement** — Converts evaluation results into payments recorded on the ledger.
 
 ---
 
@@ -163,15 +183,17 @@ The system execution follows the sequence shown in our figure here [figure maybe
 <p align="center">
   <img src="p2engine/docs/architecture/observability-events.png" alt="Observability Events" width="820">
   <br>
-  <em>Every interaction captured for full traceability</em>
+  <em>All system events flow through a single stream</em>
 </p>
 
-The observability architecture is built around four core mechanisms:
+The unified event stream powers monitoring, debugging, and analysis by capturing every significant system event. It is built around four key principles:
 
-- **Universal Event Streaming** — Ensures that every system activity flows through a central event stream, making agent decision-making and system-wide behavior patterns fully transparent in real time.
-- **Complete Traceability** — Records both metadata and payload in each event, preserving causal links across all agent interactions for a holistic understanding.
-- **Real-time Transparency** — Leverages live event streams to power operational monitoring and debugging interfaces, keeping the system observable during execution.
-- **Event Logs** — Captures events exhaustively for post-hoc examination of agent behaviors and system performance.
+- **Universal Event Streaming** — Routes all agent, tool, and system events into a single, consistent stream.
+
+- **Complete Traceability** — Captures both metadata and payload for every event, preserving causal links across the system.
+- **Real-time Transparency** — Powers live monitoring and debugging tools with immediate event updates, viewable in Rerun and through the P2Engine CLI output.
+
+- **Event Logs** — Stores a full history of events for replay, inspection, and post-mortem analysis.
 
 ---
 
@@ -183,14 +205,14 @@ The observability architecture is built around four core mechanisms:
   <em>Finite State Machine Flow</em>
 </p>
 
-P2Engine implements finite state machine orchestration, ensuring coherent state progression while enabling dynamic routing decisions and handling non-deterministic outputs from agents.
+P2Engine’s execution is built on finite state machine (FSM) principles, where each agent conversation moves through well-defined states with explicit transition rules. This makes the system deterministic, debuggable, and flexible enough to handle dynamic routing decisions and asynchronous operations.
 
-The design rests on four interlocking ideas, fully inspired by Erik’s work.
+The FSM design is guided by four key ideas:
 
-- **Emergent Coordination** — Empowers the system to decide at runtime how many agents to deploy and how to assign tasks, moving beyond rigid sequential workflows to truly configurable behavior.
-- **Finite State Machine Control** — Governs state transitions with explicit rules and handlers, ensuring deterministic progression while allowing dynamic routing based on agent outputs.
-- **Conversation Branching** — Allows interaction histories to fork at any point, supporting experimental workflows and comparative analyses of different coordination strategies.
-- **Dynamic Agent Delegation** — Enables agents to spawn sub-agents and sub-conversations, creating a hierarchical task decomposition that emerges from actual system needs rather than a predetermined plan.
+- **Emergent Coordination** — Decides at runtime how many agents to deploy and how to assign tasks, moving beyond rigid, pre-planned workflows.
+- **Explicit State Transitions** — Governs every step with clear transition rules and handlers, ensuring reliable progression while allowing dynamic routing based on agent outputs.
+- **Conversation Branching** — Allows interaction histories to fork at any point, enabling experimental workflows and comparative analyses of different strategies.
+- **Dynamic Agent Delegation** — Lets agents spawn sub-agents and sub-conversations, building a hierarchical task decomposition that adapts to real system needs.
 
 ---
 
@@ -199,20 +221,22 @@ The design rests on four interlocking ideas, fully inspired by Erik’s work.
 <p align="center">
   <img src="p2engine/docs/architecture/transaction_flow.png" alt="Transaction Flow" width="820">
   <br>
-  <em>It shows the From initiation to ledger confirmation</em>
+  <em>From request initiation to ledger confirmation</em>
 </p>
 
-The transaction flow ensures that all financial operations follow a consistent pattern with proper validation, execution, and recording. Our image illustrates the complete flow from initiation to ledger confirmation. And this it how it goes, every balance change and transfer (Canton/DAML) is appended to an immutable trail with the relevant metadata. This supports post-hoc inspection, compliance reporting, and reconciliation, while keeping operational paths simple and verifiable. [could we have a sentence like this or no no?]
+The transaction flow ensures that every financial operation follows a consistent pattern with proper validation, execution, and recording. The diagram shows the full lifecycle: a request is validated (agent exists, balance is sufficient, amount is valid), submitted to Canton for smart contract execution and consensus, and finally committed to update balances and create an immutable audit record. Each transaction result, success or failure, is returned with its ID, allowing for traceability and post-hoc inspection. This design supports compliance reporting and reconciliation while keeping the operational path simple and verifiable.
 
 ---
 
 ## Future
 
+[maybe here or elsewhere but add that one liner about it feels 90% done, needs that final push]
+
 So, what’s next for P2Engine?
 
-A first big win is to **close the learning loop.** Use the stored trajectories and evaluator rewards to optimize system prompts, routing, tools, and model choices. The iniial focus will be "System Prompt Learning" where the goal will be to improve the “program around the model” (prompts, tool availability, temperatures, routing) instead of retraining weights. And I do think this type of learning that fits nicely with P2Engine, and is not a long way away to achieve. We need to first firm up the rollout module, evaluator, and rewards, fix a few internals, then already we can start experimenting with this learning loop.
+A first big win is to **close the learning loop.** Use the stored trajectories and evaluator rewards to optimize system prompts, routing, tools, and model choices. The initial focus will be **"System Prompt Learning"** where the goal will be to improve the “program around the model” (prompts, tool availability, temperatures, routing) instead of retraining weights. _What I'm describing here in truth is more configuration learning, but yeh I think solely focus on system prompts then we can go into the full "program arountdthe model" learning over time_. Either way I do think this type of learning that fits nicely with P2Engine, and is not far from being achievable. We need to first firm up the rollout module, evaluator, and rewards, fix a few internals, then already we can start experimenting with this learning loop.
 
-In the system prompt learning loop, the router/root agent gives several sub-agents the same task with different configs, scores their steps/outputs, and propagates the best strategy (prompt text, tool allowlist, model, temperature) to weaker variants. Updates can be applied per-step, at checkpoints, or at the end of the trajectory. We treat each system prompt as a configuration to optimize. It learns which of the prompts models to adjust what works which approaches worked etc. So as Karpathy says its about figuring out which approach for an agent is the best, and that is often steered by the system prompt itself not the weights.
+In the system prompt learning loop, the router/root agent gives several sub-agents the same task with different configs, scores their steps/outputs, and propagates the best strategy (prompt text, tool allowlist, model, temperature) to weaker variants. Updates can be applied per-step, at x steps, or at the end of the trajectory. We treat each system prompt as a configuration to optimize. It learns which of the prompts models to adjust what works which approaches worked etc. So as Karpathy says its about figuring out which approach for an agent is the best, and that is often steered by the system prompt itself not the weights.
 
 So again, treat each system prompt as a living program the root/router edits based on evaluator feedback. During a rollout, the router compares sibling agents (same task, different configs), propagates the best-performing strategies (prompt text, tool choices, temperature), and normalizes around them.
 
@@ -221,5 +245,7 @@ This idea adopts, reflects and builds upon the thinking of:
 - [A tweet by Karpathy on System Prompt Learning](https://x.com/karpathy/status/1921368644069765486)
 - [Against RL: The Case for System 2 Learning](https://blog.elicit.com/system-2-learning)
 - [Part 4: Improving agent reasoning](https://www.arnovich.com/writings/state_machines_for_multi_agent_part_4/), and [More Thoughts on Agents](https://www.arnovich.com/writings/more_on_agents/)
+
+and the idea will evolve as I get to work on this.
 
 Once that’s in place, who knows where P2Engine goes next!
